@@ -9,19 +9,10 @@
 #include <dirent.h>
 #include <stdlib.h>
 
-#define RETVAL_PARAMS 1
-#define RETVAL_DIR 2
-#define RETVAL_OVERFLOW 3
-#define RETVAL_ALLOC 4
+#include "parse.h"
+#include "retval.h"
 
 #define CONFIG_ROOT "./Floppies"
-
-#define PARSE_TOKEN_SZ_MAX 255
-#define PARSE_MODE_KEY 0
-#define PARSE_MODE_VAL 1
-
-#define MODE_DECODE 0
-#define MODE_ENCODE 1
 
 void join_path( char* path_out, size_t path_out_sz_max, const char* path_in ) {
    size_t path_out_init_sz = 0;
@@ -109,81 +100,6 @@ cleanup:
    return retval;
 }
 
-int parse_keyval(
-    const char* key, const char* key_ck, const char* val_try, char** val_p
- ) {
-   int retval = 0;
-
-   if( 0 != strncmp( key_ck, key, strlen( key_ck ) + 1 ) ) {
-      goto cleanup;
-   }
-
-   /* Copy the prospective value to the new value pointer. */
-   *val_p = malloc( strlen( val_try ) + 1 );
-   if( NULL == *val_p ) {
-      retval = RETVAL_ALLOC;
-      goto cleanup;
-   }
-   strcpy( *val_p, val_try );
-   (*val_p)[strlen( val_try )] = '\0';
-
-cleanup:
-
-   return retval;
-}
-
-int parse_post(
-   const char* post, size_t post_sz, const char* key, char** val_p
-) {
-   int retval = 0;
-   int mode = PARSE_MODE_KEY;
-   size_t i = 0;
-   char token[PARSE_TOKEN_SZ_MAX + 1];
-   char key_iter[PARSE_TOKEN_SZ_MAX + 1];
-
-   token[0] = '\0';
-   memset( key_iter, '\0', PARSE_TOKEN_SZ_MAX + 1 );
-
-   for( i = 0 ; post_sz > i ; i++ ) {
-      switch( post[i] ) {
-      case '=':
-         /* Save key to compare. */
-         strncpy( key_iter, token, PARSE_TOKEN_SZ_MAX );
-         mode = PARSE_MODE_VAL;
-         token[0] = '\0';
-         break;
-
-      case '&':
-         /* Check for key match and copy if so. */
-         retval = parse_keyval( key_iter, key, token, val_p );
-         if( retval || NULL != *val_p ) {
-            goto cleanup;
-         }
-         mode = PARSE_MODE_KEY;
-         token[0] = '\0';
-         break;
-
-      default:
-         if( strlen( token ) + 1 >= PARSE_TOKEN_SZ_MAX ) {
-            retval = RETVAL_OVERFLOW;
-            goto cleanup;
-         }
-         strncat( token, &(post[i]), 1 );
-         break;
-      }
-   }
-
-   /* Try the final key/value pair. */
-   retval = parse_keyval( key_iter, key, token, val_p );
-   if( retval ) {
-      goto cleanup;
-   }
-
-cleanup:
-   
-   return retval;
-}
-
 int mount_image(
     FCGX_Request* req, const char* dir_path, const char* image_name
  ) {
@@ -199,32 +115,6 @@ int mount_image(
    system( "sudo modprobe g_mass_storage file=\"floppies.img\" stall=0" );
 
    return 0;
-}
-
-int encode_data( const char* data_in, char** p_data_out, int mode ) {
-   int retval = 0;
-   size_t i = 0;
-
-   *p_data_out = calloc( 1, strlen( data_in ) + 1 );
-   if( NULL == *p_data_out ) {
-      retval = RETVAL_ALLOC;
-      goto cleanup;
-   }
-
-   for( i = 0 ; strlen( data_in ) > i ; i++ ) {
-      if( MODE_DECODE == mode && '+' == data_in[i] ) {
-         (*p_data_out)[i] = ' ';
-
-      } else if( MODE_ENCODE == mode && ' ' == data_in[i] ) {
-         (*p_data_out)[i] = '+';
-      } else {
-         (*p_data_out)[i] = data_in[i];
-      }
-   }
-
-cleanup:
-
-   return retval;
 }
 
 int main() {
@@ -262,7 +152,7 @@ int main() {
       }
       
       /* Fix path URL encoding. */
-      retval = encode_data( req_uri_raw, &req_uri, MODE_DECODE );
+      retval = parse_encode( req_uri_raw, &req_uri, PARSE_DECODE );
       if( retval ) {
          goto req_cleanup;
       }

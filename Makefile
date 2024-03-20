@@ -1,7 +1,7 @@
 
 # vim: ft=make noexpandtab
 
-FLOPPCGI_SOURCES := src/floppcgi.c
+FLOPPCGI_SOURCES := src/floppcgi.c src/parse.c
 
 .PHONY: clean
 
