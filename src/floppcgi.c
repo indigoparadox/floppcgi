@@ -52,6 +52,17 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
    char parent_path[PATH_MAX + 1];
    char* parent_path_slash = NULL;
    char floppy_dir_web[PATH_MAX + 1];
+   int idx = 0;
+   int floppy_container_txt_f = -1;
+   char floppy_mounted[PATH_MAX + 1];
+   char floppy_container_txt[PATH_MAX + 1];
+   const char* floppy_container = NULL;
+
+   floppy_container = FCGX_GetParam( VAR_FLOPPIES_CONTAINER, req->envp );
+   if( NULL == floppy_container ) {
+      retval = RETVAL_PARAMS;
+      goto cleanup;
+   }
 
    floppy_root = FCGX_GetParam( VAR_FLOPPIES_ROOT, req->envp );
    if( NULL == floppy_root ) {
@@ -80,11 +91,33 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
 
    FCGX_FPrintF( req->out, "<!doctype HTML>\n<html>\n<head>\n" );
    FCGX_FPrintF( req->out, "<title>%s</title>\n", floppy_dir_web );
+   FCGX_FPrintF( req->out,
+      "<link rel=\"stylesheet\" href=\"/style.css\" />\n" );
    FCGX_FPrintF( req->out, "</head>\n<body>\n" );
+
+   FCGX_FPrintF( req->out,
+      "<h1><img src=\"/floppysrv.png\" />Floppy Disk Server</h1>\n" );
 
    FCGX_FPrintF( req->out,
       "<h2>Current Path</h2>\n<p class=\"current-path\">%s</p>\n",
       floppy_dir_web );
+
+   FCGX_FPrintF( req->out, "<h2>Current Mounted</h2>\n" );
+
+   memset( floppy_container_txt, '\0', PATH_MAX + 1 );
+   snprintf( floppy_container_txt, PATH_MAX, "%s.txt", floppy_container );
+   floppy_container_txt_f = open( floppy_container_txt, O_RDONLY );
+   if( 0 <= floppy_container_txt_f ) {
+      memset( floppy_mounted, '\0', PATH_MAX + 1 );
+      read( floppy_container_txt_f, floppy_mounted, PATH_MAX );
+      close( floppy_container_txt_f );
+
+      FCGX_FPrintF( req->out,
+         "<p class=\"current-mounted\">%s</a>\n", floppy_mounted );
+   } else {
+      FCGX_FPrintF( req->out,
+         "<p class=\"current-mounted\">(No image mounted.)</a>\n" );
+   }
 
    FCGX_FPrintF( req->out,
       "<h2>Select Image</h2>\n"
@@ -136,12 +169,23 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
       } else {
          /* POST button for file. */
          FCGX_FPrintF( req->out,
-            "<li><input type=\"submit\" name=\"image\" value=\"%s\" /></li>\n",
-            dir_ent->d_name );
+            "<li>"
+            "<input type=\"radio\" id=\"im-%d\" name=\"image\" value=\"%s\" />"
+            "<label for=\"im-%d\">%s</label></li>\n",
+            idx, dir_ent->d_name, idx, dir_ent->d_name );
+         idx++;
       }
    }
 
-   FCGX_FPrintF( req->out, "</ul>\n</form>\n" );
+   FCGX_FPrintF( req->out, "</ul>\n" );
+
+   FCGX_FPrintF( req->out,
+       "<input type=\"submit\" name=\"action\" value=\"Mount\" />" );
+
+   FCGX_FPrintF( req->out,
+       "<input type=\"submit\" name=\"action\" value=\"Eject\" />" );
+
+   FCGX_FPrintF( req->out, "</form>\n" );
 
    FCGX_FPrintF( req->out, "</body>\n</html>\n" );
 
@@ -154,15 +198,51 @@ cleanup:
    return retval;
 }
 
+int unmount_image( FCGX_Request* req ) {
+   char cmd_mount[PATH_MAX + 1];
+   const char* floppy_container = NULL;
+   char floppy_container_txt[PATH_MAX + 1];
+   int retval = 0;
+   int floppy_container_txt_f = -1;
+   struct stat ent_stat;
+
+   /* TODO: Check command lengths against truncation. */
+
+   floppy_container = FCGX_GetParam( VAR_FLOPPIES_CONTAINER, req->envp );
+   if( NULL == floppy_container ) {
+      retval = RETVAL_PARAMS;
+      goto cleanup;
+   }
+
+   memset( floppy_container_txt, '\0', PATH_MAX + 1 );
+   snprintf( floppy_container_txt, PATH_MAX, "%s.txt", floppy_container );
+
+   system( "sudo rmmod g_mass_storage" );
+
+   if( !stat( floppy_container_txt, &ent_stat ) ) {
+      unlink( floppy_container_txt );
+   }
+
+   if( !stat( floppy_container, &ent_stat ) ) {
+      unlink( floppy_container );
+   }
+
+cleanup:
+
+   return retval;
+}
+
 int mount_image(
     FCGX_Request* req, const char* dir_path, const char* image_name
- ) {
+) {
    char path_buf[PATH_MAX + 1];
    char cmd_mount[PATH_MAX + 1];
    const char* floppy_root = NULL;
    const char* floppy_container = NULL;
+   char floppy_container_txt[PATH_MAX + 1];
    int retval = 0;
    int floppy_c_f = -1;
+   int floppy_container_txt_f = -1;
    struct stat ent_stat;
    int ff_cfg_f = -1;
    char ff_cfg_path[] = "/tmp/ffcfgXXXXXX";
@@ -180,6 +260,9 @@ int mount_image(
       retval = RETVAL_PARAMS;
       goto cleanup;
    }
+
+   memset( floppy_container_txt, '\0', PATH_MAX + 1 );
+   snprintf( floppy_container_txt, PATH_MAX, "%s.txt", floppy_container );
 
    memset( path_buf, '\0', PATH_MAX + 1 );
 
@@ -236,11 +319,60 @@ int mount_image(
    system( "sudo rmmod g_mass_storage" );
    system( cmd_mount );
 
+   floppy_container_txt_f = open( floppy_container_txt, O_WRONLY | O_CREAT,
+      S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH );
+   if( 0 > floppy_container_txt_f ) {
+      retval = RETVAL_TMP;
+      goto cleanup;
+   }
+   dprintf( floppy_container_txt_f, "%s", image_name );
+   close( floppy_container_txt_f );
+
 cleanup:
 
    /* if( !stat( floppy_container, &ent_stat ) ) {
       unlink( floppy_container );
    } */
+
+   return retval;
+}
+
+int send_file( FCGX_Request* req, const char* path ) {
+   int file_f = -1;
+   int retval = 0;
+   struct stat file_stat;
+   char* file_buf = NULL;
+
+   if( stat( path, &file_stat ) ) {
+      retval = RETVAL_ICO;
+      goto cleanup;
+   }
+
+   file_buf = calloc( 1, file_stat.st_size );
+   if( NULL == file_buf ) {
+      retval = RETVAL_ALLOC;
+      goto cleanup;
+   }
+
+   file_f = open( path, O_RDONLY );
+   if( 0 > file_f ) {
+      retval = RETVAL_ICO;
+      goto cleanup;
+   }
+
+   read( file_f, file_buf, file_stat.st_size );
+
+   FCGX_PutStr( file_buf, file_stat.st_size, req->out );
+
+cleanup:
+
+   if( NULL != file_buf ) {
+      free( file_buf );
+   }
+
+   if( 0 <= file_f ) {
+      close( file_f );
+   }
 
    return retval;
 }
@@ -256,6 +388,7 @@ int handle_req( FCGX_Request* req ) {
    int post_buf_sz = 0;
    char* image_sel = NULL;
    const char* floppy_root = NULL;
+   char* action_buf = NULL;
 
    floppy_root = FCGX_GetParam( VAR_FLOPPIES_ROOT, req->envp );
    if( NULL == floppy_root ) {
@@ -296,21 +429,44 @@ int handle_req( FCGX_Request* req ) {
       goto cleanup;
    }
 
-   /* Make sure path exists. */
-   if( stat( floppy_dir, &ent_stat ) ) {
-      FCGX_FPrintF( req->out, "Status: 404 Bad Request\r\n\r\n" );
-      goto cleanup;
-   }
-
    if( 0 == strncmp( "GET", req_type, 3 ) ) {
-      /* Display the list of images. */
-      FCGX_FPrintF( req->out, "Content-type: text/html\r\n" );
+      if( 0 == strncmp( "/favicon.ico", req_uri, 13 ) ) {
+         FCGX_FPrintF( req->out, "Content-type: image/vnd.microsoft.icon\r\n" );
 
-      FCGX_FPrintF( req->out, "\r\n" );
+         FCGX_FPrintF( req->out, "\r\n" );
 
-      retval = list_floppies( req, floppy_dir );
-      if( retval ) {
-         goto cleanup;
+         retval = send_file( req, "favicon.ico" );
+
+      } else if( 0 == strncmp( "/style.css", req_uri, 11 ) ) {
+         FCGX_FPrintF( req->out, "Content-type: text/css\r\n" );
+
+         FCGX_FPrintF( req->out, "\r\n" );
+
+         retval = send_file( req, "style.css" );
+
+      } else if( 0 == strncmp( "/floppysrv.png", req_uri, 15 ) ) {
+         FCGX_FPrintF( req->out, "Content-type: image/png\r\n" );
+
+         FCGX_FPrintF( req->out, "\r\n" );
+
+         retval = send_file( req, "floppysrv.png" );
+
+      } else {
+         /* Make sure path exists. */
+         if( stat( floppy_dir, &ent_stat ) ) {
+            FCGX_FPrintF( req->out, "Status: 404 Bad Request\r\n\r\n" );
+            goto cleanup;
+         }
+
+         /* Display the list of images. */
+         FCGX_FPrintF( req->out, "Content-type: text/html\r\n" );
+
+         FCGX_FPrintF( req->out, "\r\n" );
+
+         retval = list_floppies( req, floppy_dir );
+         if( retval ) {
+            goto cleanup;
+         }
       }
    } else if( 0 == strncmp( "POST", req_type, 4 ) ) {
 
@@ -322,6 +478,13 @@ int handle_req( FCGX_Request* req ) {
       }
       FCGX_GetStr( post_buf, post_buf_sz, req->in );
 
+      retval = parse_post( post_buf, post_buf_sz, "action", &action_buf );
+      if( retval ) {
+         /* Don't exit, just abort this request. */
+         retval = 0;
+         goto cleanup;
+      }
+
       retval = parse_post( post_buf, post_buf_sz, "image", &image_sel );
       if( retval ) {
          /* Don't exit, just abort this request. */
@@ -329,13 +492,10 @@ int handle_req( FCGX_Request* req ) {
          goto cleanup;
       }
 
-      /* TODO: Mount the image. */
-      retval = mount_image( req, req_uri, image_sel );
-
-      if( NULL != image_sel ) {
-         /* Free buffer allocated in parse_post(). */
-         free( image_sel );
-         image_sel = NULL;
+      if( 0 == strncmp( "Mount", action_buf, 6 ) ) {
+         retval = mount_image( req, req_uri, image_sel );
+      } else if( 0 == strncmp( "Eject", action_buf, 6 ) ) {
+         retval = unmount_image( req );
       }
 
       FCGX_FPrintF( req->out, "Status: 303 See Other\r\n" );
@@ -345,6 +505,16 @@ int handle_req( FCGX_Request* req ) {
    }
 
 cleanup:
+
+   if( NULL != image_sel ) {
+      /* Free buffer allocated in parse_post(). */
+      free( image_sel );
+   }
+
+   if( NULL != action_buf ) {
+      /* Free buffer allocated in parse_post(). */
+      free( action_buf );
+   }
 
    FCGX_Finish_r( req );
 
