@@ -7,6 +7,7 @@
 #define RETVAL_OVERFLOW 0x04
 #define RETVAL_ALLOC  	0x08
 #define RETVAL_CONT	0x10
+#define RETVAL_TMP	0x20
 
 #endif /* !RETVAL_H */
 

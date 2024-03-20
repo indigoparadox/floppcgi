@@ -20,6 +20,8 @@
 
 #define FLOPPIES_CONTAINER_SZ 10000000
 
+#define FLOPPIES_FF_CFG "interface = ibmpc\nhost = unspecified\npin02 = auto\npin34 = auto\nwrite-protect = %s\nside-select-glitch-filter = 0\ntrack-change = instant\nindex-suppression = yes\nejected-on-startup = no\nimage-on-startup = %s\ndisplay-probe-ms = 3000\nautoselect-file-secs = 0\nautoselect-folder-secs = 0\nnav-mode = default\nnav-loop = yes\ntwobutton-action = rotary\nrotary = full\ndisplay-type = auto\nnav-scroll-rate = 80\nnav-scroll-pause = 300\nstep-volume = 20\nda-report-version = ""\nextend-image = yes\n"
+
 void join_path( char* path_out, size_t path_out_sz_max, const char* path_in ) {
    size_t path_out_init_sz = 0;
 
@@ -35,6 +37,9 @@ void join_path( char* path_out, size_t path_out_sz_max, const char* path_in ) {
       strncat( path_out, "/", path_out_sz_max - strlen( path_out ) );
    }
    strncat( path_out, path_in, path_out_sz_max - strlen( path_out ) );
+   if( 0 < strlen( path_out ) && '/' == path_out[strlen( path_out ) - 1] ) {
+      path_out[strlen( path_out ) - 1] = '\0';
+   }
 }
 
 int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
@@ -44,6 +49,9 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
    struct stat ent_stat;
    char ent_path[PATH_MAX + 1];
    const char* floppy_root = NULL;
+   char parent_path[PATH_MAX + 1];
+   char* parent_path_slash = NULL;
+   char floppy_dir_web[PATH_MAX + 1];
 
    floppy_root = FCGX_GetParam( VAR_FLOPPIES_ROOT, req->envp );
    if( NULL == floppy_root ) {
@@ -53,7 +61,7 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
 
    dir = opendir( floppy_dir );
 
-   if( strlen( floppy_root ) >= strlen( floppy_dir ) ) {
+   if( strlen( floppy_root ) > strlen( floppy_dir ) ) {
       retval = RETVAL_DIR;
       goto cleanup;
    }
@@ -63,19 +71,45 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
       goto cleanup;
    }
 
+   /* Get a link-friendly version of the path with the root chopped off. */
+   memset( floppy_dir_web, '\0', PATH_MAX + 1 );
+   if( 0 < strlen( floppy_root ) ) {
+      strncpy(
+         floppy_dir_web, &(floppy_dir[strlen( floppy_root )]), PATH_MAX );
+   }
+
    FCGX_FPrintF( req->out, "<!doctype HTML>\n<html>\n<head>\n" );
-   FCGX_FPrintF( req->out, "<title>%s</title>\n",
-      &(floppy_dir[strlen( floppy_root )]) );
+   FCGX_FPrintF( req->out, "<title>%s</title>\n", floppy_dir_web );
    FCGX_FPrintF( req->out, "</head>\n<body>\n" );
 
-   FCGX_FPrintF( req->out, "<h1>%s</h1>\n",
-      &(floppy_dir[strlen( floppy_root )]) );
+   FCGX_FPrintF( req->out,
+      "<h2>Current Path</h2>\n<p class=\"current-path\">%s</p>\n",
+      floppy_dir_web );
 
    FCGX_FPrintF( req->out,
-      "<form action=\"%s\" method=\"post\">\n",
-      &(floppy_dir[strlen( floppy_root )]) );
+      "<h2>Select Image</h2>\n"
+      "<form class=\"select-image\" action=\"%s\" method=\"post\">\n",
+      floppy_dir_web );
+
+   /* TODO: Read-only checkbox. */
 
    FCGX_FPrintF( req->out, "<ul>\n" );
+
+   /* Create a link to the parent path. */
+   if( 0 < strlen( floppy_dir_web ) ) {
+      memset( parent_path, '\0', PATH_MAX + 1 );
+      strncpy( parent_path, floppy_dir_web, PATH_MAX );
+      parent_path_slash = strrchr( parent_path, '/' );
+      if( 1 < strlen( parent_path ) && NULL != parent_path_slash ) {
+         parent_path_slash[0] = '\0';
+      }
+      if( 0 == strlen( parent_path ) ) {
+         /* Add a slash at the end so we go to the root at minimum. */
+         parent_path[0] = '/';
+         parent_path[1] = '\0';
+      }
+      FCGX_FPrintF( req->out, "<li><a href=\"%s\">..</a></li>\n", parent_path );
+   }
 
    while( NULL != (dir_ent = readdir( dir )) ) {
       if( '.' == dir_ent->d_name[0] ) {
@@ -130,6 +164,10 @@ int mount_image(
    int retval = 0;
    int floppy_c_f = -1;
    struct stat ent_stat;
+   int ff_cfg_f = -1;
+   char ff_cfg_path[] = "/tmp/ffcfgXXXXXX";
+
+   /* TODO: Check command lengths against truncation. */
 
    floppy_root = FCGX_GetParam( VAR_FLOPPIES_ROOT, req->envp );
    if( NULL == floppy_root ) {
@@ -176,6 +214,18 @@ int mount_image(
    system( cmd_mount );
 
    /* TODO: Write and copy FF.CFG. */
+   ff_cfg_f = mkstemp( ff_cfg_path );
+   if( 0 > ff_cfg_f ) {
+      retval = RETVAL_TMP;
+      goto cleanup;
+   }
+   dprintf( ff_cfg_f, FLOPPIES_FF_CFG, "no", image_name );
+   memset( cmd_mount, '\0', PATH_MAX + 1 );
+   snprintf( cmd_mount, PATH_MAX, "mcopy -i \"%s\" \"%s\" \"::/FF.CFG\"",
+      floppy_container, ff_cfg_path );
+   system( cmd_mount );
+   unlink( ff_cfg_path );
+   close( ff_cfg_f );
 
    /* Figure out command with container image path. */
    memset( cmd_mount, '\0', PATH_MAX + 1 );
