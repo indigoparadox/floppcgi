@@ -8,11 +8,17 @@
 #include <sys/stat.h>
 #include <dirent.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
 
 #include "parse.h"
 #include "retval.h"
 
-#define VAR_FLOPPIES_ROOT "FLOPPIES"
+#define VAR_FLOPPIES_ROOT "FLOPPIES_ROOT"
+
+#define VAR_FLOPPIES_CONTAINER "FLOPPIES_CONTAINER"
+
+#define FLOPPIES_CONTAINER_SZ 10000000
 
 void join_path( char* path_out, size_t path_out_sz_max, const char* path_in ) {
    size_t path_out_init_sz = 0;
@@ -21,8 +27,10 @@ void join_path( char* path_out, size_t path_out_sz_max, const char* path_in ) {
    if(
        0 < path_out_init_sz &&
        '/' != path_out[path_out_init_sz - 1] &&
+       '"' != path_out[path_out_init_sz - 1] &&
        0 < strlen( path_in ) &&
-       '/' != path_in[0]
+       '/' != path_in[0] &&
+       '"' != path_in[0]
    ) {
       strncat( path_out, "/", path_out_sz_max - strlen( path_out ) );
    }
@@ -55,12 +63,17 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
       goto cleanup;
    }
 
-   FCGX_FPrintF( req->out,
-      "<form action=\"%s\" method=\"post\">\n",
+   FCGX_FPrintF( req->out, "<!doctype HTML>\n<html>\n<head>\n" );
+   FCGX_FPrintF( req->out, "<title>%s</title>\n",
+      &(floppy_dir[strlen( floppy_root )]) );
+   FCGX_FPrintF( req->out, "</head>\n<body>\n" );
+
+   FCGX_FPrintF( req->out, "<h1>%s</h1>\n",
       &(floppy_dir[strlen( floppy_root )]) );
 
    FCGX_FPrintF( req->out,
-      "<input type=\"hidden\" name=\"xxx\" value=\"yyy\" />\n" );
+      "<form action=\"%s\" method=\"post\">\n",
+      &(floppy_dir[strlen( floppy_root )]) );
 
    FCGX_FPrintF( req->out, "<ul>\n" );
 
@@ -94,7 +107,9 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
       }
    }
 
-   FCGX_FPrintF( req->out, "</ul>\n</form>" );
+   FCGX_FPrintF( req->out, "</ul>\n</form>\n" );
+
+   FCGX_FPrintF( req->out, "</body>\n</html>\n" );
 
 cleanup:
 
@@ -109,8 +124,12 @@ int mount_image(
     FCGX_Request* req, const char* dir_path, const char* image_name
  ) {
    char path_buf[PATH_MAX + 1];
+   char cmd_mount[PATH_MAX + 1];
    const char* floppy_root = NULL;
+   const char* floppy_container = NULL;
    int retval = 0;
+   int floppy_c_f = -1;
+   struct stat ent_stat;
 
    floppy_root = FCGX_GetParam( VAR_FLOPPIES_ROOT, req->envp );
    if( NULL == floppy_root ) {
@@ -118,16 +137,60 @@ int mount_image(
       goto cleanup;
    }
 
+   floppy_container = FCGX_GetParam( VAR_FLOPPIES_CONTAINER, req->envp );
+   if( NULL == floppy_container ) {
+      retval = RETVAL_PARAMS;
+      goto cleanup;
+   }
+
    memset( path_buf, '\0', PATH_MAX + 1 );
 
+   /* Figure out path to floppy image. */
    join_path( path_buf, PATH_MAX, floppy_root );
    join_path( path_buf, PATH_MAX, dir_path );
    join_path( path_buf, PATH_MAX, image_name );
 
+   /* Remove container if it exists. */
+   if( !stat( floppy_container, &ent_stat ) ) {
+      unlink( floppy_container );
+   }
+
+   /* Create image file. */
+   floppy_c_f = open( floppy_container, O_WRONLY | O_CREAT,
+      S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH );
+   if( 0 > floppy_c_f ) {
+      retval = RETVAL_CONT;
+      goto cleanup;
+   }
+
+   ftruncate( floppy_c_f, FLOPPIES_CONTAINER_SZ );
+   close( floppy_c_f );
+
+   memset( cmd_mount, '\0', PATH_MAX + 1 );
+   snprintf( cmd_mount, PATH_MAX, "mkfs.vfat \"%s\"", floppy_container );
+   system( cmd_mount );
+
+   memset( cmd_mount, '\0', PATH_MAX + 1 );
+   snprintf( cmd_mount, PATH_MAX, "mcopy -i \"%s\" \"%s\" \"::/%s\"",
+      floppy_container, path_buf, image_name );
+   system( cmd_mount );
+
+   /* TODO: Write and copy FF.CFG. */
+
+   /* Figure out command with container image path. */
+   memset( cmd_mount, '\0', PATH_MAX + 1 );
+   snprintf( cmd_mount, PATH_MAX,
+      "sudo modprobe g_mass_storage file=\"%s\" stall=0", floppy_container );
+
+   /* Execute mount commands. */
    system( "sudo rmmod g_mass_storage" );
-   system( "sudo modprobe g_mass_storage file=\"floppies.img\" stall=0" );
+   system( cmd_mount );
 
 cleanup:
+
+   /* if( !stat( floppy_container, &ent_stat ) ) {
+      unlink( floppy_container );
+   } */
 
    return retval;
 }
@@ -194,8 +257,6 @@ int handle_req( FCGX_Request* req ) {
       FCGX_FPrintF( req->out, "Content-type: text/html\r\n" );
 
       FCGX_FPrintF( req->out, "\r\n" );
-
-      FCGX_FPrintF( req->out, floppy_dir );
 
       retval = list_floppies( req, floppy_dir );
       if( retval ) {
