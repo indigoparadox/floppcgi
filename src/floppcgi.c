@@ -18,6 +18,8 @@
 
 #define VAR_FLOPPIES_CONTAINER "FLOPPIES_CONTAINER"
 
+#define VAR_FLOPPIES_ASSETS "FLOPPIES_ASSETS"
+
 #define FLOPPIES_CONTAINER_SZ 10000000
 
 #define FLOPPIES_FF_CFG "interface = ibmpc\nhost = unspecified\npin02 = auto\npin34 = auto\nwrite-protect = %s\nside-select-glitch-filter = 0\ntrack-change = instant\nindex-suppression = yes\nejected-on-startup = no\nimage-on-startup = %s\ndisplay-probe-ms = 3000\nautoselect-file-secs = 0\nautoselect-folder-secs = 0\nnav-mode = default\nnav-loop = yes\ntwobutton-action = rotary\nrotary = full\ndisplay-type = auto\nnav-scroll-rate = 80\nnav-scroll-pause = 300\nstep-volume = 20\nda-report-version = ""\nextend-image = yes\n"
@@ -306,7 +308,7 @@ int mount_image(
       floppy_container, path_buf, image_name );
    system( cmd_mount );
 
-   /* TODO: Write and copy FF.CFG. */
+   /* Write and copy FF.CFG. */
    ff_cfg_f = mkstemp( ff_cfg_path );
    if( 0 > ff_cfg_f ) {
       retval = RETVAL_TMP;
@@ -347,14 +349,28 @@ cleanup:
    return retval;
 }
 
-int send_file( FCGX_Request* req, const char* path ) {
+int send_file( FCGX_Request* req, const char* path, const char* mtype ) {
    int file_f = -1;
    int retval = 0;
    struct stat file_stat;
    char* file_buf = NULL;
+   char asset_path[PATH_MAX + 1];
+   const char* assets_root = NULL;
 
-   if( stat( path, &file_stat ) ) {
-      retval = RETVAL_ICO;
+   /* Figure out the assets path. */
+   assets_root = FCGX_GetParam( VAR_FLOPPIES_ASSETS, req->envp );
+   if( NULL == assets_root ) {
+      retval = RETVAL_PARAMS;
+      goto cleanup;
+   }
+
+   memset( asset_path, '\0', PATH_MAX + 1 );
+   join_path( asset_path, PATH_MAX, assets_root );
+   join_path( asset_path, PATH_MAX, path );
+
+   /* Make sure the file exists. */
+   if( stat( asset_path, &file_stat ) ) {
+      retval = RETVAL_FILE;
       goto cleanup;
    }
 
@@ -364,13 +380,17 @@ int send_file( FCGX_Request* req, const char* path ) {
       goto cleanup;
    }
 
-   file_f = open( path, O_RDONLY );
+   file_f = open( asset_path, O_RDONLY );
    if( 0 > file_f ) {
-      retval = RETVAL_ICO;
+      retval = RETVAL_FILE;
       goto cleanup;
    }
 
    read( file_f, file_buf, file_stat.st_size );
+
+   FCGX_FPrintF( req->out, "Content-type: %s\r\n", mtype );
+
+   FCGX_FPrintF( req->out, "\r\n" );
 
    FCGX_PutStr( file_buf, file_stat.st_size, req->out );
 
@@ -452,25 +472,13 @@ int handle_req( FCGX_Request* req ) {
 
    if( 0 == strncmp( "GET", req_type, 3 ) ) {
       if( 0 == strncmp( "/favicon.ico", req_uri, 13 ) ) {
-         FCGX_FPrintF( req->out, "Content-type: image/vnd.microsoft.icon\r\n" );
-
-         FCGX_FPrintF( req->out, "\r\n" );
-
-         retval = send_file( req, "favicon.ico" );
+         retval = send_file( req, "favicon.ico", "image/vnd.microsoft.icon" );
 
       } else if( 0 == strncmp( "/style.css", req_uri, 11 ) ) {
-         FCGX_FPrintF( req->out, "Content-type: text/css\r\n" );
-
-         FCGX_FPrintF( req->out, "\r\n" );
-
-         retval = send_file( req, "style.css" );
+         retval = send_file( req, "style.css", "text/css" );
 
       } else if( NULL != req_ext && 0 == strncmp( ".png", req_ext, 5 ) ) {
-         FCGX_FPrintF( req->out, "Content-type: image/png\r\n" );
-
-         FCGX_FPrintF( req->out, "\r\n" );
-
-         retval = send_file( req, req_name );
+         retval = send_file( req, req_name, "image/png" );
 
       } else {
          /* Make sure path exists. */
