@@ -1,5 +1,33 @@
 
+body {
+	background: black;
+	font-family: sans-serif;
+	font-size: 1.5em;
+	margin: 0;
+	padding: 20px;
+}
+
 h1 img {
 	margin: 0 10px 0 0;
+}
+
+li input {
+	width: 20px;
+}
+
+li.floppy-720, li.floppy-1440 {
+	padding-left: 20px;
+}
+
+li.floppy-720 {
+	background: url( floppy720.png ) no-repeat 0 10px;
+}
+
+li.floppy-1440 {
+	background: url( floppy1440.png ) no-repeat 0 10px;
+}
+
+li.dir {
+	padding-left: 50px;
 }
 

@@ -141,7 +141,8 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
          parent_path[0] = '/';
          parent_path[1] = '\0';
       }
-      FCGX_FPrintF( req->out, "<li><a href=\"%s\">..</a></li>\n", parent_path );
+      FCGX_FPrintF( req->out,
+          "<li class=\"dir\"><a href=\"%s\">..</a></li>\n", parent_path );
    }
 
    while( NULL != (dir_ent = readdir( dir )) ) {
@@ -163,15 +164,18 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
       if( S_IFDIR == (S_IFDIR & ent_stat.st_mode) ) {
          /* Link to directory. */
          FCGX_FPrintF( req->out,
-            "<li><a href=\"%s/%s\">%s</a></li>\n",
+            "<li class=\"dir\"><a href=\"%s/%s\">%s</a></li>\n",
             &(floppy_dir[strlen( floppy_root ) + 1]), dir_ent->d_name,
             dir_ent->d_name );
       } else {
          /* POST button for file. */
          FCGX_FPrintF( req->out,
-            "<li>"
+            "<li class=\"%s\">"
             "<input type=\"radio\" id=\"im-%d\" name=\"image\" value=\"%s\" />"
             "<label for=\"im-%d\">%s</label></li>\n",
+            737280 == ent_stat.st_size ? "floppy-720" :
+               1474560 == ent_stat.st_size ? "floppy-1440" :
+                  "floppy-unknown",
             idx, dir_ent->d_name, idx, dir_ent->d_name );
          idx++;
       }
@@ -389,6 +393,8 @@ int handle_req( FCGX_Request* req ) {
    char* image_sel = NULL;
    const char* floppy_root = NULL;
    char* action_buf = NULL;
+   char* req_ext = NULL;
+   char* req_name = NULL;
 
    floppy_root = FCGX_GetParam( VAR_FLOPPIES_ROOT, req->envp );
    if( NULL == floppy_root ) {
@@ -429,6 +435,15 @@ int handle_req( FCGX_Request* req ) {
       goto cleanup;
    }
 
+   req_ext = strrchr( req_uri, '.' );
+   req_name = strrchr( req_uri, '/' );
+   if( NULL == req_name ) {
+      /* No directory separator present. */
+      req_name = req_uri;
+   } else {
+      req_name = &(req_name[1]);
+   }
+
    if( 0 == strncmp( "GET", req_type, 3 ) ) {
       if( 0 == strncmp( "/favicon.ico", req_uri, 13 ) ) {
          FCGX_FPrintF( req->out, "Content-type: image/vnd.microsoft.icon\r\n" );
@@ -444,12 +459,12 @@ int handle_req( FCGX_Request* req ) {
 
          retval = send_file( req, "style.css" );
 
-      } else if( 0 == strncmp( "/floppysrv.png", req_uri, 15 ) ) {
+      } else if( NULL != req_ext && 0 == strncmp( ".png", req_ext, 5 ) ) {
          FCGX_FPrintF( req->out, "Content-type: image/png\r\n" );
 
          FCGX_FPrintF( req->out, "\r\n" );
 
-         retval = send_file( req, "floppysrv.png" );
+         retval = send_file( req, req_name );
 
       } else {
          /* Make sure path exists. */
