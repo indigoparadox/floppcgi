@@ -44,8 +44,6 @@ void join_path( char* path_out, size_t path_out_sz_max, const char* path_in ) {
 
 int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
    int retval = 0;
-   DIR* dir = NULL;
-   struct dirent* dir_ent = NULL;
    struct stat ent_stat;
    char ent_path[PATH_MAX + 1];
    const char* floppy_root = NULL;
@@ -57,6 +55,9 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
    char floppy_mounted[PATH_MAX + 1];
    char floppy_container_txt[PATH_MAX + 1];
    const char* floppy_container = NULL;
+   struct dirent** dir_list;
+   int dir_list_count = 0;
+   int i = 0;
 
    floppy_container = FCGX_GetParam( VAR_FLOPPIES_CONTAINER, req->envp );
    if( NULL == floppy_container ) {
@@ -70,14 +71,7 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
       goto cleanup;
    }
 
-   dir = opendir( floppy_dir );
-
    if( strlen( floppy_root ) > strlen( floppy_dir ) ) {
-      retval = RETVAL_DIR;
-      goto cleanup;
-   }
-
-   if( NULL == dir ) {
       retval = RETVAL_DIR;
       goto cleanup;
    }
@@ -145,18 +139,24 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
           "<li class=\"dir\"><a href=\"%s\">..</a></li>\n", parent_path );
    }
 
-   while( NULL != (dir_ent = readdir( dir )) ) {
-      if( '.' == dir_ent->d_name[0] ) {
+   dir_list_count = scandir( floppy_dir, &dir_list, NULL, alphasort );
+   if( -1 == dir_list_count ) {
+      retval = RETVAL_DIR;
+      goto cleanup;
+   }
+
+   while( dir_list_count > i ) {
+      if( '.' == dir_list[i]->d_name[0] ) {
          /* Skip hidden files. */
-         continue;
+         goto dir_list_cleanup;
       }
 
       memset( ent_path, '\0', PATH_MAX + 1 );
       join_path( ent_path, PATH_MAX, floppy_dir );
-      join_path( ent_path, PATH_MAX, dir_ent->d_name );
+      join_path( ent_path, PATH_MAX, dir_list[i]->d_name );
 
       if( stat( ent_path, &ent_stat ) ) {
-         continue;
+         goto dir_list_cleanup;
       }
 
       /* TODO: URLencode paths. */
@@ -165,8 +165,9 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
          /* Link to directory. */
          FCGX_FPrintF( req->out,
             "<li class=\"dir\"><a href=\"%s/%s\">%s</a></li>\n",
-            &(floppy_dir[strlen( floppy_root ) + 1]), dir_ent->d_name,
-            dir_ent->d_name );
+            &(floppy_dir[strlen( floppy_root ) + 1]),
+            dir_list[i]->d_name,
+            dir_list[i]->d_name );
       } else {
          /* POST button for file. */
          FCGX_FPrintF( req->out,
@@ -176,9 +177,14 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
             737280 == ent_stat.st_size ? "floppy-720" :
                1474560 == ent_stat.st_size ? "floppy-1440" :
                   "floppy-unknown",
-            idx, dir_ent->d_name, idx, dir_ent->d_name );
+            idx, dir_list[i]->d_name, idx,
+            dir_list[i]->d_name );
          idx++;
       }
+
+dir_list_cleanup:
+      free( dir_list[i] );
+      i++;
    }
 
    FCGX_FPrintF( req->out, "</ul>\n" );
@@ -195,8 +201,8 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
 
 cleanup:
 
-   if( NULL != dir ) {
-      closedir( dir );
+   if( NULL != dir_list ) {
+      free( dir_list );
    }
 
    return retval;
