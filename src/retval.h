@@ -9,6 +9,11 @@
 #define RETVAL_CONT	0x10
 #define RETVAL_TMP	0x20
 #define RETVAL_FILE	0x40
+#define RETVAL_CMD	0x80
+
+#ifdef DEBUG
+#   define debug_printf( ... ) dprintf( 1, __VA_ARGS__ )
+#endif /* DEBUG */
 
 #endif /* !RETVAL_H */
 

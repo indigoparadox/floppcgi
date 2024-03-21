@@ -1,6 +1,10 @@
 
+/* vim: set ts=3 sw=3 sts=3 et nobackup : */
+
 #include <string.h>
 #include <stdlib.h>
+#include <ctype.h>
+#include <stdio.h>
 
 #include "parse.h"
 #include "retval.h"
@@ -76,11 +80,100 @@ int parse_post(
    }
 
 cleanup:
-   
+
    return retval;
 }
 
-int parse_encode( const char* data_in, char** p_data_out, int mode ) {
+int parse_append( char* buf, size_t buf_sz, char c ) {
+   int retval = 0;
+   size_t buf_len = 0;
+
+   buf_len = strlen( buf );
+   if( buf_len >= buf_sz ) {
+      retval = RETVAL_OVERFLOW;
+      goto cleanup;
+   }
+
+   buf[buf_len] = c;
+   buf[buf_len + 1] = '\0';
+
+cleanup:
+
+   return retval;
+}
+
+int parse_decode( const char* data_in, size_t data_in_sz, char** p_data_out ) {
+   int retval = 0;
+   size_t in_i = 0,
+      entity_i = 0;
+   int decode_mode = 0;
+   char entity[PARSE_ENTITY_SZ_MAX + 1];
+
+   *p_data_out = calloc( 1, data_in_sz + 1 );
+   if( NULL == *p_data_out ) {
+      retval = RETVAL_ALLOC;
+      goto cleanup;
+   }
+
+   for( in_i = 0 ; data_in_sz > in_i ; in_i++ ) {
+      switch( data_in[in_i] ) {
+      case '%':
+         if( PARSE_DECODE_ENT == decode_mode ) {
+            retval = parse_append( *p_data_out, data_in_sz, '%' );
+            decode_mode = PARSE_DECODE_NONE;
+            entity_i = 0;
+            if( retval ) {
+               goto cleanup;
+            }
+         } else {
+            decode_mode = PARSE_DECODE_ENT;
+         }
+         break;
+
+      default:
+         if(
+             PARSE_DECODE_ENT == decode_mode &&
+             (isalpha( data_in[in_i] ) || isdigit( data_in[in_i] )) &&
+             entity_i < PARSE_ENTITY_SZ_MAX
+         ) {
+            /* Build entity. */
+            entity[entity_i++] = data_in[in_i];
+            entity[entity_i] = '\0';
+            debug_printf( "entity iter: %s (%d)\n", entity, entity_i );
+
+         } else {
+
+            if( 0 < entity_i ) {
+               /* Decode build entity. */
+               debug_printf( "entity: %s (%c)\n", entity,
+                   (char)strtol( entity, NULL, 16 )  );
+               retval = parse_append( *p_data_out, data_in_sz,
+                   (char)strtol( entity, NULL, 16 )  );
+               decode_mode = PARSE_DECODE_NONE;
+               entity_i = 0;
+            }
+
+            if( '+' == data_in[in_i] ) {
+               /* Rough decode + to space. */
+               retval = parse_append( *p_data_out, data_in_sz, ' ' );
+            } else {
+               /* Normal character. */
+               retval = parse_append( *p_data_out, data_in_sz, data_in[in_i] );
+            }
+            if( retval ) {
+               goto cleanup;
+            }
+         }
+         break;
+      }
+   }
+
+cleanup:
+
+   return retval;
+}
+
+int parse_encode( const char* data_in, char** p_data_out ) {
    int retval = 0;
    size_t i = 0;
 
@@ -91,10 +184,7 @@ int parse_encode( const char* data_in, char** p_data_out, int mode ) {
    }
 
    for( i = 0 ; strlen( data_in ) > i ; i++ ) {
-      if( PARSE_DECODE == mode && '+' == data_in[i] ) {
-         (*p_data_out)[i] = ' ';
-
-      } else if( PARSE_ENCODE == mode && ' ' == data_in[i] ) {
+      if( ' ' == data_in[i] ) {
          (*p_data_out)[i] = '+';
       } else {
          (*p_data_out)[i] = data_in[i];
@@ -105,5 +195,4 @@ cleanup:
 
    return retval;
 }
-
 

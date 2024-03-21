@@ -211,11 +211,9 @@ cleanup:
 }
 
 int unmount_image( FCGX_Request* req ) {
-   char cmd_mount[PATH_MAX + 1];
    const char* floppy_container = NULL;
    char floppy_container_txt[PATH_MAX + 1];
    int retval = 0;
-   int floppy_container_txt_f = -1;
    struct stat ent_stat;
 
    /* TODO: Check command lengths against truncation. */
@@ -261,6 +259,8 @@ int mount_image(
 
    /* TODO: Check command lengths against truncation. */
 
+   debug_printf( "mounting: %s\n", image_name );
+
    floppy_root = FCGX_GetParam( VAR_FLOPPIES_ROOT, req->envp );
    if( NULL == floppy_root ) {
       retval = RETVAL_PARAMS;
@@ -301,12 +301,18 @@ int mount_image(
 
    memset( cmd_mount, '\0', PATH_MAX + 1 );
    snprintf( cmd_mount, PATH_MAX, "mkfs.vfat \"%s\"", floppy_container );
-   system( cmd_mount );
+   if( system( cmd_mount ) ) {
+      retval = RETVAL_CMD;
+      goto cleanup;
+   }
 
    memset( cmd_mount, '\0', PATH_MAX + 1 );
    snprintf( cmd_mount, PATH_MAX, "mcopy -i \"%s\" \"%s\" \"::/%s\"",
       floppy_container, path_buf, image_name );
-   system( cmd_mount );
+   if( system( cmd_mount ) ) {
+      retval = RETVAL_CMD;
+      goto cleanup;
+   }
 
    /* Write and copy FF.CFG. */
    ff_cfg_f = mkstemp( ff_cfg_path );
@@ -318,7 +324,10 @@ int mount_image(
    memset( cmd_mount, '\0', PATH_MAX + 1 );
    snprintf( cmd_mount, PATH_MAX, "mcopy -i \"%s\" \"%s\" \"::/FF.CFG\"",
       floppy_container, ff_cfg_path );
-   system( cmd_mount );
+   if( system( cmd_mount ) ) {
+      retval = RETVAL_CMD;
+      goto cleanup;
+   }
    unlink( ff_cfg_path );
    close( ff_cfg_f );
 
@@ -329,7 +338,14 @@ int mount_image(
 
    /* Execute mount commands. */
    system( "sudo rmmod g_mass_storage" );
-   system( cmd_mount );
+   if( system( cmd_mount ) ) {
+      retval = RETVAL_CMD;
+      goto cleanup;
+   }
+
+   if( !stat( floppy_container_txt, &ent_stat ) ) {
+      unlink( floppy_container_txt );
+   }
 
    floppy_container_txt_f = open( floppy_container_txt, O_WRONLY | O_CREAT,
       S_IRUSR | S_IWUSR | S_IRGRP | S_IROTH );
@@ -416,6 +432,7 @@ int handle_req( FCGX_Request* req ) {
    struct stat ent_stat;
    char* post_buf = NULL;
    int post_buf_sz = 0;
+   char* image_sel_raw = NULL;
    char* image_sel = NULL;
    const char* floppy_root = NULL;
    char* action_buf = NULL;
@@ -443,7 +460,7 @@ int handle_req( FCGX_Request* req ) {
    }
    
    /* Fix path URL encoding. */
-   retval = parse_encode( req_uri_raw, &req_uri, PARSE_DECODE );
+   retval = parse_decode( req_uri_raw, strlen( req_uri_raw ), &req_uri );
    if( retval ) {
       goto cleanup;
    }
@@ -508,20 +525,31 @@ int handle_req( FCGX_Request* req ) {
       FCGX_GetStr( post_buf, post_buf_sz, req->in );
 
       retval = parse_post( post_buf, post_buf_sz, "action", &action_buf );
-      if( retval ) {
-         /* Don't exit, just abort this request. */
-         retval = 0;
-         goto cleanup;
-      }
-
-      retval = parse_post( post_buf, post_buf_sz, "image", &image_sel );
-      if( retval ) {
+      if( retval || NULL == action_buf ) {
          /* Don't exit, just abort this request. */
          retval = 0;
          goto cleanup;
       }
 
       if( 0 == strncmp( "Mount", action_buf, 6 ) ) {
+         /* Mount an image. */
+
+         retval = parse_post( post_buf, post_buf_sz, "image", &image_sel_raw );
+         if( retval ) {
+            /* Don't exit, just abort this request. */
+            retval = 0;
+            goto cleanup;
+         }
+
+         retval = parse_decode( image_sel_raw, strlen( image_sel_raw ),
+            &image_sel );
+         if( retval || NULL == image_sel_raw ) {
+            /* Don't exit, just abort this request. */
+            retval = 0;
+            goto cleanup;
+         }
+         debug_printf( "image_sel: %s\n", image_sel );
+
          retval = mount_image( req, req_uri, image_sel );
       } else if( 0 == strncmp( "Eject", action_buf, 6 ) ) {
          retval = unmount_image( req );
@@ -538,6 +566,11 @@ cleanup:
    if( NULL != image_sel ) {
       /* Free buffer allocated in parse_post(). */
       free( image_sel );
+   }
+
+   if( NULL != image_sel_raw ) {
+      /* Free buffer allocated in parse_post(). */
+      free( image_sel_raw );
    }
 
    if( NULL != action_buf ) {
