@@ -94,9 +94,7 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
    FCGX_FPrintF( req->out,
       "<h1><img src=\"/floppysrv.png\" />Floppy Disk Server</h1>\n" );
 
-   FCGX_FPrintF( req->out,
-      "<h2>Current Path</h2>\n<p class=\"current-path\">%s</p>\n",
-      floppy_dir_web );
+   /* Display currently mounted image. */
 
    FCGX_FPrintF( req->out, "<h2>Current Mounted</h2>\n" );
 
@@ -114,6 +112,12 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
       FCGX_FPrintF( req->out,
          "<p class=\"current-mounted\">(No image mounted.)</a>\n" );
    }
+
+   /* Display file browser. */
+
+   FCGX_FPrintF( req->out,
+      "<h2>Current Path</h2>\n<p class=\"current-path\">%s</p>\n",
+      floppy_dir_web );
 
    FCGX_FPrintF( req->out,
       "<h2>Select Image</h2>\n"
@@ -173,12 +177,14 @@ int list_floppies( FCGX_Request* req, const char* floppy_dir ) {
       } else {
          /* POST button for file. */
          FCGX_FPrintF( req->out,
-            "<li class=\"%s\">"
+            "<li class=\"floppy %s\">"
             "<input type=\"radio\" id=\"im-%d\" name=\"image\" value=\"%s\" />"
             "<label for=\"im-%d\">%s</label></li>\n",
             737280 == ent_stat.st_size ? "floppy-720" :
                1474560 == ent_stat.st_size ? "floppy-1440" :
-                  "floppy-unknown",
+                  1720320 == ent_stat.st_size ? "floppy-1680" :
+                     2949120 == ent_stat.st_size ? "floppy-2880" :
+                        "floppy-unknown",
             idx, dir_list[i]->d_name, idx,
             dir_list[i]->d_name );
          idx++;

@@ -1,0 +1,13 @@
+[Unit]
+Description=FloppCGI
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/opt/floppcgi/floppcgi
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
