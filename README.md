@@ -1,4 +1,4 @@
-# floppcgi
+# ![floppcgi icon](floppysrv.png) floppcgi
 
 A tiny menu system for pushing floppy images to a Gotek floppy emulator via USB OTG.
 
