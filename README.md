@@ -14,3 +14,5 @@ To install, clone this repo to (/opt/floppcgi is recommended) and run setup.sh.
 
 You MUST cd into the directory before running setup.sh. Do not try to run it from one level up!
 
+WARNING: Do *not* use a USB cable with power-positive (+5V) connected! This may cause damage and will likely not work! Please see the website for more details!
+
