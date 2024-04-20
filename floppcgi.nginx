@@ -1,0 +1,13 @@
+
+include fastcgi.conf;
+
+server {
+	listen 80;
+
+	server_name _;
+
+	location / {
+		fastcgi_pass 127.0.0.1:9000;
+	}
+}
+
